@@ -1,113 +1,182 @@
-## Why this tool?
-QNAP storage has "thin-volume" LVM feature, which is not working properly and can lead to metadata (and data, in some cases) corruption (most likely - when volumes are full and system is doing automated snapshots). It is not merged into mainline kernel.
+# QNAP Thin Logical Volume Data Recovery
+## Exposition
+Firstly, a huge thank you to [ABLomas (QNAP-LVM-recovery)](https://github.com/ABLomas/QNAP-LVM-recovery) and [max-boehm (qnap-utils)](https://github.com/max-boehm/qnap-utils). Without their work I wouldn't have been able to recover my data. \
+The following are the steps I took to recover the data from my QNAP TS-431P2 after the mainboard or CPU died about a year ago. I did have backups of my data, but only the essentials. This was a project for all of the remaining nice-to-have data. \
+I consider myself an amateur at all of this, so I have no doubt that this is likely more complicated than it needed to be.
 
-This VM image can help you to recover data from corrupted thin LVM volume. Well, at least it worked in two cases i had, maybe it will work for you. It allows to repair and access thin (and thick) provisioned LVM volumes (QNAP edition).
+### The Dead NAS - QNAP TS-431P2
+One day it died while I was at work and wouldn't turn on (power supply stil works). It was on a surge protector and UPS. It was about 7 years old.
+My QNAP setup consisted of 4x 6TB HDDs in a RAID5 array. The array contaned a single 16.35TB **Thin Volume** which is where the problems began. \
+I have learned that QNAP uses modified binaries and a patched kernel for their implementation of thin volumes, so I couldn't just use the standard binaries from my Linux distribution to access the data.
 
-## Why separate VM image?
-QNAP sources (modified GPL stuff) were released, kind of, but when i was trying to build kernel - i had so many missing references, undefined macros (linked into some non-existing includes), etc - in other words, kernel does not build. Modified LVM binaries work, but without kernel support they are useless. I did this VM long ago so do not remember all steps i did, but in short - i extracted old QNAP recovery image (old for some serious reason - probably changed kernel compression), applied patches, swapped LVM binaries from new qnap release and installed few binaries. Also used hints from https://github.com/mkke/qnap-recovery - something like that. 
+### Recovery Setup
+I used `dd` to make full disk backups of each of the drives in the array to a new NAS prior to attempting any of this.
 
-I did not found any commercial tool capable of fixing (!) corrupted thin LVM. Even when some claim that they should be able to read data - they could do that from "clean" LVM volume (which may be useful if you had partial disk failure, recovered with corrupted data on disk, QNAP storage refuses to use full volume, but metadata is intact), but any corruption - and all tools become useless (well, sure they can do full data scan, looking for file patterns, but this is not what i want).
+#### Failures
+1. I mounted the RAID5 array on a system running Linux Mint Debian Edition 6 and attempted to load the logical volume, only to have it error out. I don't remember the errors, it was a long time ago. I learned that QNAP have modified they way their logical volumes work which required their custom kernel.
+2. I attempted to compile their kernel (source available at https://sourceforge.net/projects/qosgpl), but as ABLomas found out too, there were many problems and missing references. 
+3. I found ABLomas' repository and Hyper-V image many months later which spurred a new round of attempts. I Imaged the logical volume from within the RAID array to my new ASUSTOR NAS and tried using the Hyper-V image on a Lenovo Tiny M710q running Windows 10, but I couldn't figure out a way to get Hyper-V to access the image across the network. I couldn't get Hyper-V to read the images across an SMB share, nor with the original disk images mounted with iSCSI. The VM reported the images as significantly smaller than they should have been. Not sure if it was my implementation or limitations of some of the protocols used. Either way, I got tired and moved on.
+2. I then tried using Oracle VirtualBox on Windows 10. Similar problems with getting the disk images to read across the network. But I did get ABLomas's Hyper-V system disk running in VirtualBox.
 
-## Steps to recover data
-(at least i would do this way, many things may differ depending on situation. I also did that long time ago, so do not remember all details):
-- Take out disks from QNAP storage. This MAY be not required if you are sure that array is in good shape (see steps below). Usually it's better to work with data copy, even in read-only mode
-- Attach them to linux system (have kpartx, lvm2, mdadm packages ready), make disk images (again, optional - i would not work with original client data - maybe your data is not worth it) using dd/ddrescue
-- Detach original disks (they are your master copy now, keep them in safe place). Setup RAID images (maybe not required if you have single disk, there are such devices with thin provisioning and no RAID? I don't know any):
+#### Success
+In the end I gave up on the idea of being able to mount the images from a network location and I set up an old computer with 6 SATA ports, and mounted three of the original four RAID5 drives in a degraded state, and the fourth was erased and used to store 5TB of Virtual Disk Images used to exfiltrate the data from the virtual machine. \
+I had to set it up this way because the VM only has network drivers for the Intel Gigabit Ethernet Adapter 1000E (e1000e: Intel(R) PRO/1000 Network Driver - 3.2.5-k) and VirtualBox doesn't support that adapter. It *was* detecting the adapters (seen using `lspci`) and there may have been a way to get the kernel to accept additional drivers, but I didn't explore this.
 
-       kpartx -a -v /fimg/m2_1.iso
-       kpartx -a -v /fimg/m2_2.iso
-       kpartx -a -v /fimg/sata_1.iso
-       kpartx -a -v /fimg/sata_2.iso
-       kpartx -a -v /fimg/sata_3.iso
-       # <...> repeat as needed for all disk images
-       # note loop names in previous command output
-       mdadm --assemble --readonly --force /dev/md0 /dev/mapper/loop[12345]p3
-       # Your loop names may differ, device count also
-       # p3 is RAID (with parity) with user data on QNAP devices i saw, but may differ
-       # check with `fdisk -l /dev/mapper/loop1` for example and notice which partition is biggest
-       # or see header/disk name in `hexdump -C /dev/mapper/loop5p3 | head`
-       # or just use mdadm: `mdadm --examine /dev/mapper/loop[12345]p3`
-       
-- inspect previous command output and RAID health (`cat /proc/mdstat`), fix issues if there are any
-- Again, optional, depends on data cost/data amount - make full data image: `ddrescue /dev/md126 /lots_of_space/raid_content.iso` (name md126 may differ)
-So, you got your data in single file, this is good thing, but if you try to use it on typical linux system, for example using `lvscan` - you will probably get output:
-    
-        WARNING: Unrecognised segment type tier-thin-pool
-        <...>
-        Cannot process volume group vg1
-        	
+##### PC
+My recovery setup was an old PC with at least 5x SATA ports (1x OS, 1x Exfiltration, 3x RAID). \
+I installed Linux Mint Debian Edition 7 to an old HDD, though I probably could have used the live USB image if needed. \
+The PC used has an old Intel i5-750 and 6GB of DDR RAM. \
+I also had an old, but functioning, QNAP TS-110 for the purpose of obtaining the file `libexpat.so.1`.
 
- If you play with metadata and force reading data, populating snapshot states and VG's/LV's in image. Then you still can't get your volume/snapshots recognized:
-    
-        # lvchange -ay -K -v vg1/snap10050
-            Using logical volume(s) on command line.
-            Activating logical volume "snap10050" exclusively.
-            activation/volume_list configuration setting not defined: Checking only host tags for vg1/snap10050.
-            dev_open(/dev/loop0) called while suspended
-            Creating vg1-tp1_tmeta
-            Loading vg1-tp1_tmeta table (252:0)
-            Resuming vg1-tp1_tmeta (252:0)
-            Creating vg1-tp1_tierdata_0
-            Loading vg1-tp1_tierdata_0 table (252:1)
-            Resuming vg1-tp1_tierdata_0 (252:1)
-            Creating vg1-tp1_tierdata_1
-            Loading vg1-tp1_tierdata_1 table (252:2)
-            Resuming vg1-tp1_tierdata_1 (252:2)
-            Creating vg1-tp1_tierdata_2
-            Loading vg1-tp1_tierdata_2 table (252:3)
-            Resuming vg1-tp1_tierdata_2 (252:3)
-            Executing: /sbin/thin_check -q --skip-mappings /dev/mapper/vg1-tp1_tmeta
-            Creating vg1-tp1-tpool
-            Loading vg1-tp1-tpool table (252:4)
-        [ 6623.501490] device-mapper: thin metadata: __create_persistent_data_objects: block manger get correctly
-            Resuming vg1-tp1-tpool (252:4)
-        [ 6623.931462] device-mapper: thin: 252:4: growing the data device from 4913144 to 6594936 blocks
-        [ 6624.256141] device-mapper: btree spine: node_check failed: blocknr 256 != wanted 41016
-        [ 6624.258780] device-mapper: block manager: btree_node validator check failed for block 41016
-        [ 6624.261257] BUG: unable to handle kernel paging request at ffffc90001a57440
-        [ 6624.262211] IP: [<ffffffff813ad1b3>] bitmap_set+0x63/0x70
-        [ 6624.262211] PGD 3dc36067 PUD 3dc37067 PMD 2368c067 PTE 0
-        <...>
-        [ 6624.262211] RIP  [<ffffffff813ad1b3>] bitmap_set+0x63/0x70
-        [ 6624.262211]  RSP <ffff88003a977a58>
-        [ 6624.262211] CR2: ffffc90001a57440
-        [ 6624.262211] ---[ end trace c1e4e65f25ea35f7 ]---
-        Killed
-          
- So, kernel module cannot understand metadata. Here we need modified image.
-  
-- Install Hyper-V (it is probably in W10 installations already? If not, you can add it using "add-remove windows components"), start mmc, add Hyper-V snapin, import unpacked image from "Releases" tab, go to settings. Add disks and change settings as required:
-  - attach RAID image from steps above (storage with iso file - we need raw content)
-  - attach additional storage - you will need to copy data out
-  - adjust serial port settings (see serial settings - QNAP has no monitor output, we use serial link - in image it is set as `\\.\pipe\com15` - i maybe also used tool named "COMpipe.exe" - it's free on internet)
-- Start VM. You won't see anything if you use "Connect" (no video out) but you can connect to serial port (by default COM15) using putty or any other tool you like.
-- Log in using `admin/admin` username/password, run `/etc/init.d/init_check.sh`, lsblk, check that all attached devices visible. Mount additional space if required
-- I do not remember all details, but most likely i extended ISO image (dd few hundred megabytes from /dev/zero, merge it (to end) with raid image (using cat, for example), extend PV inside - or any other operation you know). Skip this step for a while, try with steps below, but most likely it will fail due to missing disk space, so you will need to extend it.
-- Go with recovery, in my case:
+## Recovery Steps
+### Creating the Virtual Machine
+1. Download the HyperV virtual machine image from https://github.com/ABLomas/QNAP-LVM-recovery/releases.
+2. Extract the file `QNAP_t1/Virtual Hard Disks/darbinis_vhd.vhd` from the 7z archive under the v0.1 release.
+3. Install Oracle VirtualBox from https://www.virtualbox.org/wiki/Downloads. I used version 7.2.8.
+4. Follow the steps under **Creating Virtual Disk Image from the Host System** to create your exfiltration Virtual Disk Images. Once you have formatted them, you will need to mount one and add the file `libexpat.so.1`. This file is required for mounting the Thin Logical Volume and will need to be copied to the path `/usr/lib/` each time you boot up the virtual machine.
+    - Download `libexpat.so.1` from this repository. See **Extracting libexpat.so.1 yourself** if you want to extract the file from QNAP firmware yourself.
+5. Create a new virtual machine. I selected the type `BSD`, and the subtype `FreeBSD`.
+6. 1 CPU core and 1GB RAM is sufficient.
+7. For "Hard Disk", select "Use and Existing Virtual Hard Disk File" and add the "darbinis_vhd.vhd" image. It must be added as an IDE device, not SATA. This was done automatically for me.
+8. Click "Finish", then go to the settings of your new VM.
+9. Enable **Expert** settings.
+10. Under **System > Accelleration**, set the **Paravirtualization Interface** to **Hyper-V**.
+11. Under **Serial Ports > Port 1**, enable the serial port with the following settings:
+    - Port mode: Host Pipe
+    - Connect to existing pipe/socket: False/unchecked
+    - Path/Address: `/tmp/vbox_serial_pipe`
+12. Under **Storage**, add an **AHCI (SATA)** controller, and add your logical volume .vmdk and all of your exfiltration virtual disk images to it.
+13. Save your changes and launch your VM.
 
+### Running the Virtual Machine
+1. If you get an error launching your, I had to disable some kernel modules that were impeding VirtualBox's access to the Hyperviser. Try searching the web for your error, or ask an LLM like https://lumo.proton.me. The below worked for me.
+    ``` bash
+    sudo modprobe -r kvm_intel
+    sudo modprobe -r kvm
+    ```
+2. From a terminal on the Virtual Machine's host, connect to the serial pipe. I had to install it first.
+    ``` bash
+    sudo apt install socat
+    socat -,echo=0,raw UNIX-CONNECT:/tmp/vbox_serial_pipe,escape=0x1d
+    ```
+3. Log in with the credentials admin/admin.
+4. Once logged in, run the QNAP init script.
+    ``` bash
+    /etc/init.d/init_check.sh
+    ```
+5. Determine the location of all attached virtual disks and identify them based on expected sizes.
+    ``` bash
+    fdisk -l
+    ```
+6. Make the directories and mount the exfiltration VHDs
+    ``` bash
+    mkdir /mnt/exfil{1..3} /mnt/data
+    mount -t ext4 /dev/sd? /mnt/exfil1
+    mount -t ext4 /dev/sd? /mnt/exfil2
+    mount -t ext4 /dev/sd? /mnt/exfil3
+    ```
+7. Copy the missing libexpat.so.1 file to the local filesystem so that thin logical volumes can be mounted.
+    ``` bash
+    cp -a /mnt/exfil1/usr /
+    ```
+8. Symlink the logical volume so as to masquerade as a RAID array, launch the meta daemon and activate the logical volume.
+    ``` bash
+    ln -s /dev/sd? /dev/md0
+    lvmetad
+    pvscan --cache /dev/md0
+    pvs
+    lvchange -a y vg1/lv1
+    ```
+9. Mount the EXT4 partition within the logical volume and commence data extraction/exfiltration.
+    ``` bash
+    mount -t ext4 /dev/vg1/lv1 /mnt/data
+    cd /mnt/data
+    ```
+10. When you are done recovering your data to the Virtual Disk Images, you will need to turn off the Virtual Machine. Run the `sync` command before poweroff to make sure all pending writes are finalised.
 
-      # /etc/init.d/init_check.sh
-      mkdir /1
-      mount -t ext4 /dev/sdb2 /1
-      # now in /1 we have RAID data
-      losetup /dev/loop0 /1/raid_content.iso
-      ln -s /dev/loop0 /dev/md1
-      # I do not remember details - why - but IIRC QNAP tools refused to work with loop images, but symlink to "md" device was ok
-      pvscan --cache /dev/md1
-      pvs
-      lvchange -a y vg1/lv1 
-      # <...> crash
-      lvconvert --repair vg1/tp1
-        WARNING: Sum of all thin volume sizes (71.75 TiB) exceeds the size of thin pools and the size of whole volume group (3.31 TiB)!
-        For thin pool auto extension activation/thin_pool_autoextend_threshold should be below 100.
-        WARNING: If everything works, remove "vg1/tp1_meta0".
-        WARNING: Use pvmove command to move "vg1/tp1_tmeta" on the best fitting PV.
-		
-- Check if volumes visible (`lvdisplay`), activate (but IIRC not required), check status on it, if LVM is happy (see `dmesg` also) - do fsck on logical volume. Expect to see many errors, but fsck should be able to fix them
-- Copy your data out to new storage
-  
-## What to expect:
-In both cases i had - some data was lost, this is expected, but data loss was not huge. First one this was 0.08%, second case was a bit worse with ~0.34% of data lost. This is also counting stuff from lost+found (after fsck) - so some files lost their names (without it dataloss can be counted at approx 0.11% and 0.45% of data).
-This looks not bad, but when you have terabytes of data - can hurt, so pre-fsck image could be used to pull even more data (`icat`, data read from unclean (before fixing!) filesystem, manually cutting overlapping data areas, etc) - but in my case clients did not noticed any important data loss (lost temporary files, few email attachments which can be recovered) and i decided not to dive deeper.
+### Extracting recovered data
+1. Once the virtual machine is powered off, re-mount your Virtual Disk Images locally and move the data to its final destination.
+    ``` bash
+    sudo qemu-nbd -c /dev/nbd0 /mnt/exfil/exfil1.vdi
+    sudo qemu-nbd -c /dev/nbd1 /mnt/exfil/exfil2.vdi
+    sudo qemu-nbd -c /dev/nbd2 /mnt/exfil/exfil3.vdi
+    sudo mkdir /mnt/exfil{1..3}
+    sudo mount /dev/nbd0p1 /mnt/exfil1
+    sudo mount /dev/nbd1p1 /mnt/exfil2
+    sudo mount /dev/nbd2p1 /mnt/exfil3
+    ```
+2. Rinse-and-repeat as many times as needed with the amount of available storage on hand.
 
-For file checking scripts (in lost+found) see MongoDB recovery repo, but in short - this is simple script looping trough files, using magic bytes (to rename file) and then file-specific content checker (to verify file integrity). In most cases you won't need them.
+## Extra information
+### Extracting libexpat.so.1 yourself
+If you have any functioning QNAP hardware, you can obtain this file yourself by downloading the firmware **TS-X51_20230416-4.5.4.2374** from QNAP's download page for the TS-451, which is the hardware the VM's disk image was created from. I used https://github.com/max-boehm/qnap-utils on original QNAP hardware (a TS-110). You will need to install some packages like XZ and other things I cannot remember. Read the error messages when it fails and install the missing programs using Entware (https://www.myqnap.org/product/entware-std/). If the package does not exist by name, try prepending `lib` to it and/or search the packages list (this was the version for my TS-110: https://bin.entware.net/armv7sf-k3.2/Packages.html).
+Once the firmware package is extracted, the file will be located at `TS-X51_20230416-4.5.4.2374/sysroot/usr/lib/libexpat.so.1.6.0`. Rename the file to `libexpat.so.1` and add it to one of your exfiltration disk images. You will need to copy it to `/usr/lib` on the VM. I know it is a different version of the file than the one lvchange required, but it worked.
+
+### Creating Virtual Disk Image from the Host System
+Add the current user to the disk group and reboot the system. This is required for the Virtual Machine to be able to read the logical volume in the RAID array.
+``` bash
+sudo usermod -aG disk $USER
+sudo reboot
+```
+
+Mount the RAID array in a degraded state. \
+Start by stopping md127 and whatever the array is currently mounted as. \
+This is because I've already created the VHD pointing at md127.
+``` bash
+sudo mdadm --stop /dev/md126
+sudo mdadm --stop /dev/md127
+sudo mdadm --assemble --force /dev/md127 /dev/sdc3 /dev/sdd3 /dev/sde3
+```
+
+Create the virtual hard disk referencing md127.
+``` bash
+sudo VBoxManage internalcommands createrawvmdk -filename "/home/${USER}/Documents/ldvm.vmdk" -rawdisk /dev/md127
+```
+
+Mount external storage containing the exfiltration VHDs.
+``` bash
+sudo mkdir /mnt/exfil
+sudo mount /dev/sda1 /mnt/exfil
+```
+
+From VirtualBox's media manager, make as many 2TB disk images as you have space for. The maximum size I could create in the user interface was 2TB. Mount them using qemu-utils.
+``` bash
+sudo apt install qemu-utils
+sudo qemu-nbd -c /dev/nbd0 /mnt/exfil/exfil1.vdi
+sudo qemu-nbd -c /dev/nbd1 /mnt/exfil/exfil2.vdi
+sudo qemu-nbd -c /dev/nbd2 /mnt/exfil/exfil3.vdi
+```
+
+Create the new partitions. Repeat for nbd0, nbd1, and nbd2.
+``` bash
+sudo fdisk /dev/nbd0
+n (New partition)
+p (Primary partition)
+1 (Partition number)
+Accept defaults for first and last sector.
+w (Write changes to disk)
+```
+
+Format as EXT4
+``` bash
+sudo mkfs.ext4 /dev/nbd0p1
+sudo mkfs.ext4 /dev/nbd1p1
+sudo mkfs.ext4 /dev/nbd2p1
+```
+
+Mount one of the Virtual Disk Images and extract libexpat.so.1 to it.
+``` bash
+sudo mkdir /mnt/tmpexfil
+sudo mount /dev/nbd0p1 /mnt/tmpexfil
+sudo mkdir -p /mnt/tmpexfil/usr/lib
+sudo 7z e ~/Downloads/libexpat.so.1.7z -o/mnt/tmpexfil/usr/lib/
+sudo umount /mnt/tmpexfil
+sudo rmdir /mnt/tmpexfil
+```
+
+Disconnect the Virtual Disk Images and connect them to your Virtual Machine.
+``` bash
+sudo qemu-nbd -d /dev/nbd0
+sudo qemu-nbd -d /dev/nbd1
+sudo qemu-nbd -d /dev/nbd2
+```
