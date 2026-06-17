@@ -51,7 +51,7 @@ You can follow the steps to create the virtual machine, or download an export of
 13. Save your changes and launch your VM.
 
 ### Running the Virtual Machine
-1. If you get an error launching your virtual machine, I had to disable some kernel modules due to the error `VT-x was in use by another Hypervisor `VERR_VMX_IN_VMX_ROOT_MODE`. For that error, the following worked for me. If you get a different error, try searching the web, or ask an LLM like https://lumo.proton.me.
+1. If you get an error launching your virtual machine, I had to disable some kernel modules due to the error `VT-x was in use by another Hypervisor VERR_VMX_IN_VMX_ROOT_MODE`. For that error, the following worked for me. If you get a different error, try searching the web, or ask an LLM like https://lumo.proton.me.
     ``` bash
     sudo modprobe -r kvm_intel
     sudo modprobe -r kvm
