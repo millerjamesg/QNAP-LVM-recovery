@@ -123,7 +123,7 @@ I used https://github.com/max-boehm/qnap-utils on original QNAP hardware (a TS-1
 I did need to use Entware (https://www.myqnap.org/product/entware-std/) to install some additional packages such as:
 - cpio
 - liblzma
-- xz-utils
+- xz-utils \
 and maybe some others that I cannot remember. If you encounter errors, read the failure messages and install the missing packages. \
 If the package does not exist by name, try prepending `lib` to it and/or search the packages list (this was the version for my TS-110: https://bin.entware.net/armv7sf-k3.2/Packages.html).
 Once the firmware package is extracted, the file will be located at `TS-X51_20230416-4.5.4.2374/sysroot/usr/lib/libexpat.so.1.6.0`. Rename the file to `libexpat.so.1` and add it to one of your exfiltration disk images. You will need to copy it to `/usr/lib` on the VM. While it is a different version than the one lvchange sought, it worked.
@@ -184,11 +184,11 @@ p (Primary partition)
 w (Write changes to disk)
 ```
 
-Format as EXT4
+Format as EXT4, while turning off metadata checksums, which seemingly isn't supported by the VM's kernel.
 ``` bash
-sudo mkfs.ext4 /dev/nbd0p1
-sudo mkfs.ext4 /dev/nbd1p1
-sudo mkfs.ext4 /dev/nbd2p1
+sudo mkfs.ext4 -O ^metadata_csum /dev/nbd0p1
+sudo mkfs.ext4 -O ^metadata_csum /dev/nbd1p1
+sudo mkfs.ext4 -O ^metadata_csum /dev/nbd2p1
 ```
 
 Mount one of the Virtual Disk Images and copy libexpat.so.1 to it.
